@@ -5,11 +5,17 @@
 
 // ------------------------ INCLUDES ---------------------------------------- //
 #include <string.h> //for strncmp, strlen
-#include <stdio.h> //for printf, snprintf
+#include <stdio.h> //for RPC_PRINTF, snprintf
 #include <assert.h>
 
 #include "rpc.h"
 #include "jsmn/jsmn.h"
+
+
+// -------------------------- PRINTING ------------------------------------- //
+// Define your RPC_PRINTF implementation (RPC_PRINTF, uart_RPC_PRINTF, ...)
+#define RPC_PRINTF	printf
+
 
 // ------------------------ GLOBALS ----------------------------------------- //
 // This code is primarily meant for microcontrollers, so use of malloc and friends
@@ -65,25 +71,25 @@ depth_first_dump(const char* const pcJson, jsmntok_t* psToks, unsigned int uiSel
     }
 
     //print self info
-    printf("%*c", uiLevel, ' ');
-    printf("%.*s", psToks[uiSelf].end - psToks[uiSelf].start, &pcJson[psToks[uiSelf].start]);
+    RPC_PRINTF("%*c", uiLevel, ' ');
+    RPC_PRINTF("%.*s", psToks[uiSelf].end - psToks[uiSelf].start, &pcJson[psToks[uiSelf].start]);
     switch(psToks[uiSelf].type) {
         case JSMN_OBJECT:
-            printf("  (object, ");
+            RPC_PRINTF("  (object, ");
             break;
         case JSMN_ARRAY:
-            printf("  (array, ");
+            RPC_PRINTF("  (array, ");
             break;
         case JSMN_STRING:
-            printf("  (string, ");
+            RPC_PRINTF("  (string, ");
             break;
         case JSMN_PRIMITIVE:
-            printf("  (primitive, ");
+            RPC_PRINTF("  (primitive, ");
             break;
         default:
             assert(0);
     }
-    printf("size: %d, start: %d, end: %d, first child: %d, next sibling: %d)\n",
+    RPC_PRINTF("size: %d, start: %d, end: %d, first child: %d, next sibling: %d)\n",
             psToks[uiSelf].size, psToks[uiSelf].start, psToks[uiSelf].end,
             psToks[uiSelf].first_child, psToks[uiSelf].next_sibling);
 
@@ -432,7 +438,7 @@ rpc_call_method(const char* const pcCommand, int iMethod, char* pcResponse, int 
     }
 
     //call method
-    //UARTprintf("method will start writing at: %d, max chars: %d\n", iTotalLen, iRespMaxLen-iTotalLen-2);
+    //UARTRPC_PRINTF("method will start writing at: %d, max chars: %d\n", iTotalLen, iRespMaxLen-iTotalLen-2);
     workstatus_t eRet = g_psMethodTable[iMethod].func(pcCommand, g_psTokParams, g_psTokens,
                     pcResponse+iTotalLen, iRespMaxLen-iTotalLen-2); //-2 for },0
 
