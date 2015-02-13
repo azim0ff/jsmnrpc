@@ -5,16 +5,19 @@
 
 // ------------------------ INCLUDES ---------------------------------------- //
 #include <string.h> //for strncmp, strlen
-#include <stdio.h> //for RPC_PRINTF, snprintf
-#include <assert.h>
+#include <stdio.h>  //for printf, snprintf
+//#include <assert.h>
 
-#include "rpc.h"
+#include "my_assert.h"
 #include "jsmn/jsmn.h"
+#include "jsmnrpc/rpc.h"
+#include "modules/uart_console.h"
 
 
 // -------------------------- PRINTING ------------------------------------- //
-// Define your RPC_PRINTF implementation (RPC_PRINTF, uart_RPC_PRINTF, ...)
-#define RPC_PRINTF	printf
+// Define your `printf` implementation (printf, uart_printf, ...)
+extern uart_context_t* g_psDBGUARTCtx;
+#define DEBUG_PRINTF(...)	UARTprintf(g_psDBGUARTCtx, __VA_ARGS__)
 
 
 // ------------------------ GLOBALS ----------------------------------------- //
@@ -71,25 +74,33 @@ depth_first_dump(const char* const pcJson, jsmntok_t* psToks, unsigned int uiSel
     }
 
     //print self info
-    RPC_PRINTF("%*c", uiLevel, ' ');
-    RPC_PRINTF("%.*s", psToks[uiSelf].end - psToks[uiSelf].start, &pcJson[psToks[uiSelf].start]);
+    //DEBUG_PRINTF("%*c", uiLevel, ' ');
+    //DEBUG_PRINTF("%.*s", psToks[uiSelf].end - psToks[uiSelf].start, &pcJson[psToks[uiSelf].start]);
+
+    for (uint16_t i = 0; i < uiLevel; i++) {
+        UARTwrite(g_psDBGUARTCtx, " ",1,false);
+    }
+    for (uint16_t i = psToks[uiSelf].start; i < psToks[uiSelf].end; i++) {
+        UARTwrite(g_psDBGUARTCtx, &(pcJson[i]), 1,false);
+    }
+
     switch(psToks[uiSelf].type) {
         case JSMN_OBJECT:
-            RPC_PRINTF("  (object, ");
+            DEBUG_PRINTF("  (object, ");
             break;
         case JSMN_ARRAY:
-            RPC_PRINTF("  (array, ");
+            DEBUG_PRINTF("  (array, ");
             break;
         case JSMN_STRING:
-            RPC_PRINTF("  (string, ");
+            DEBUG_PRINTF("  (string, ");
             break;
         case JSMN_PRIMITIVE:
-            RPC_PRINTF("  (primitive, ");
+            DEBUG_PRINTF("  (primitive, ");
             break;
         default:
             assert(0);
     }
-    RPC_PRINTF("size: %d, start: %d, end: %d, first child: %d, next sibling: %d)\n",
+    DEBUG_PRINTF("size: %d, start: %d, end: %d, first child: %d, next sibling: %d)\n",
             psToks[uiSelf].size, psToks[uiSelf].start, psToks[uiSelf].end,
             psToks[uiSelf].first_child, psToks[uiSelf].next_sibling);
 
@@ -218,66 +229,86 @@ rpc_validate_rpc(const char* const pcCommand) {
     g_psTokParams = NULL;
     g_psTokId = NULL;
 
+    bool bBadParams = false;
+    bool bBadId = false;
+
     //we require at least one object, that being the outer {}
     if (g_iNumTokens < 1 || g_psTokens[0].type != JSMN_OBJECT) {
         return WORKSTATUS_RPC_ERROR_INVALIDOUTER;
     }
 
-    //find tokens of interest
+    //find tokens of interest, and do some simple checks on them
     if (g_psTokens[0].size > 0) {
         unsigned int sibling = g_psTokens[0].first_child;
         do {
             if (JSON_MATCHED(JRPC_JSONRPC_KEY, &g_psTokens[sibling], pcCommand)) {
                 g_psTokVersion = &g_psTokens[sibling];
+                if ( g_psTokVersion->size != 1 ||
+                     g_psTokens[g_psTokVersion->first_child].type != JSMN_STRING ||
+                     !JSON_MATCHED(JRPC_JSONRPC_VALUE, &g_psTokens[g_psTokVersion->first_child], pcCommand) )
+                {
+                    //we changed our mind, we don't want it
+                    g_psTokVersion = NULL;
+                }
             } else if (JSON_MATCHED(JRPC_METHOD_KEY, &g_psTokens[sibling], pcCommand)) {
                 g_psTokMethod = &g_psTokens[sibling];
+                if ( g_psTokMethod->size != 1 ||
+                     g_psTokens[g_psTokMethod->first_child].type != JSMN_STRING )
+                {
+                    g_psTokMethod = NULL;
+                }
             } else if (JSON_MATCHED(JRPC_PARAMS_KEY, &g_psTokens[sibling], pcCommand)) {
                 g_psTokParams = &g_psTokens[sibling];
+                //... must be object or array
+                if ( g_psTokParams->size != 1 ||
+                     (g_psTokens[g_psTokParams->first_child].type != JSMN_OBJECT &&
+                      g_psTokens[g_psTokParams->first_child].type != JSMN_ARRAY) )
+                {
+                    bBadParams = true;
+                    g_psTokParams = NULL;
+                }
             } else if (JSON_MATCHED(JRPC_ID_KEY, &g_psTokens[sibling], pcCommand)) {
                 g_psTokId = &g_psTokens[sibling];
+                //... must be STRING, NUMBER or NULL
+                //TODO: Add additional checks to weed out NON NUMBER and NON NULL.
+                //      Currently a primitive is just some unquoted ascii that starts with a certain letter
+                if ( g_psTokId->size != 1 ||
+                     (g_psTokens[g_psTokId->first_child].type != JSMN_STRING &&
+                      g_psTokens[g_psTokId->first_child].type != JSMN_PRIMITIVE) )
+                {
+                    bBadId = true;
+                    g_psTokId = NULL;
+                }
             }
         } while ( (sibling = g_psTokens[sibling].next_sibling) != -1 );
     }
 
-    //check version
-    if ( g_psTokVersion == NULL ||
-         g_psTokVersion->size != 1 ||
-         g_psTokens[g_psTokVersion->first_child].type != JSMN_STRING ||
-         !JSON_MATCHED(JRPC_JSONRPC_VALUE, &g_psTokens[g_psTokVersion->first_child], pcCommand) )
-    {
+    //check version. must be present, and "just so"
+    if (g_psTokVersion == NULL) {
         return WORKSTATUS_RPC_ERROR_INVALIDVERSION;
     }
 
-    //check id. If present...
-    if (g_psTokId) {
-        //... must be STRING, NUMBER or NULL
-        if (g_psTokId->size != 1 ||
-            (g_psTokens[g_psTokId->first_child].type != JSMN_STRING &&
-                g_psTokens[g_psTokId->first_child].type != JSMN_PRIMITIVE) )
-        {
-            //TODO: Add additional checks to weed out NON NUMBER and NON NULL.
-            //      Currently a primitive is just some unquoted ascii that starts with a certain letter
-            return WORKSTATUS_RPC_ERROR_INVALIDID;
-        }
-    }
-
     //check method. must be present
-    if (g_psTokMethod == NULL ||
-        g_psTokMethod->size != 1 ||
-        g_psTokens[g_psTokMethod->first_child].type != JSMN_STRING)
-    {
+    if (g_psTokMethod == NULL) {
         return WORKSTATUS_RPC_ERROR_INVALIDMETHOD;
     }
 
     //check params. If present...
-    if (g_psTokParams) {
-        //... must be object or array
-        if (g_psTokParams->size != 1 ||
-            (g_psTokens[g_psTokParams->first_child].type != JSMN_OBJECT &&
-                g_psTokens[g_psTokParams->first_child].type != JSMN_ARRAY) )
-        {
-            return WORKSTATUS_RPC_ERROR_INVALIDPARAMS;
-        }
+//    if (g_psTokParams == NULL) {
+//        return WORKSTATUS_RPC_ERROR_INVALIDPARAMS;
+//    }
+    //params are optional, but if they're there, we check for validity
+    if (bBadParams) {
+        return WORKSTATUS_RPC_ERROR_INVALIDPARAMS;
+    }
+
+        //check id. If present...
+//    if (g_psTokId == NULL) {
+//        return WORKSTATUS_RPC_ERROR_INVALIDID;
+//    }
+    //id is optional, but if it's there, we check for validity
+    if (bBadId) {
+        return WORKSTATUS_RPC_ERROR_INVALIDID;
     }
 
     return WORKSTATUS_NO_ERROR;
@@ -450,9 +481,10 @@ rpc_call_method(const char* const pcCommand, int iMethod, char* pcResponse, int 
     //close the curly bracket (string will be null terminated again)
     //don't know how many chars function wrote, so need to measure
     iTotalLen = strlen(pcResponse);
-    if (iTotalLen+2 <= iRespMaxLen) { //2 for },0
+    if (iTotalLen+3 <= iRespMaxLen) { //3 for },\n,\0              //2 for },\0
         pcResponse[iTotalLen] = '}';
-        pcResponse[iTotalLen+1] = 0;
+        pcResponse[iTotalLen+1] = '\n';
+        pcResponse[iTotalLen+2] = '\0';
     }
 
     return eRet;
@@ -474,7 +506,7 @@ rpc_print_error_json(const char* pcCommand, char* pcResponse,
                                       int iRespMaxLen, workstatus_t eStatus)
 {
     int iTotalLen = snprintf(pcResponse, iRespMaxLen,
-            "{\"jsonrpc\":\"2.0\", \"error\":{\"code\":%d, \"message\":\"%s\"}, \"id\":%s%.*s%s}",
+            "{\"jsonrpc\":\"2.0\", \"error\":{\"code\":%d, \"message\":\"%s\"}, \"id\":%s%.*s%s}\n",
             eStatus,
             workstatus_to_string(eStatus),
             g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? "\"" : "",
