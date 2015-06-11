@@ -6,7 +6,6 @@
 // ------------------------ INCLUDES ---------------------------------------- //
 #include <string.h> //for strncmp, strlen
 #include <stdio.h>  //for printf, snprintf
-//#include <assert.h>
 
 #include "my_assert.h"
 #include "jsmn/jsmn.h"
@@ -23,10 +22,13 @@ extern uart_context_t* g_psDBGUARTCtx;
 // ------------------------ GLOBALS ----------------------------------------- //
 // This code is primarily meant for microcontrollers, so use of malloc and friends
 // is purpusefully avoided.
+
+// -- all tokens
 #define TOKENS_MAXSIZE 32
 static jsmntok_t g_psTokens[TOKENS_MAXSIZE];       //8 bytes each, 256 bytes total
 static int g_iNumTokens;
 
+// -- jsonrpc elements as tokens
 static jsmntok_t* g_psTokVersion;
 static jsmntok_t* g_psTokMethod;
 static jsmntok_t* g_psTokParams;
@@ -59,7 +61,7 @@ static const char JRPC_NULL[]         = "null";
 // EFFECTS: prints token tree depth-first to UART
 // OUTPUT:  void
 //
-// NOTE: this function is for internal debugging only, and will be removed
+// NOTE: this function is for INTERNAL DEBUGGING ONLY, and will be removed
 //       in the future. Feel free to remove it if not needed.
 //
 // -------------------------------------------------------------------------- //
@@ -200,9 +202,9 @@ rpc_parse_command(const char* const pcCommand, int iCommandLen) {
     }
 
     // ** DEBUG **
-    if (iRes > 0) {
-        depth_first_dump(pcCommand, g_psTokens, 0, 0);
-    }
+//    if (iRes > 0) {
+//        depth_first_dump(pcCommand, g_psTokens, 0, 0);
+//    }
 
     // total number of tokens found
     g_iNumTokens = iRes;
@@ -347,7 +349,7 @@ rpc_validate_method(const char* const pcCommand, int* piMethod) {
 //  ie, JSMN_PRIMITIVE could be 3,true,null or nullwithjunk.
 //  All these are valid PRIMITIVEs as far as JSMN is concerned.
 //  And that is all that we guarantee in this method.
-//  The method itself will need to conduct a more detailed check (if desired).
+//  The rpc method itself will need to conduct a more detailed check (if desired).
 //  Pay special attention to the case of NO PARAMS
 //
 //  parameter interpretation:
@@ -445,17 +447,17 @@ rpc_validate_params(const char* const pcCommand, int iMethod) {
 //
 // -------------------------------------------------------------------------- //
 static workstatus_t
-rpc_call_method(const char* const pcCommand, int iMethod, char* pcResponse, int iRespMaxLen) {
+rpc_call_method(const char* const pcCommand, int iMethod, char* pcResponseBuffer, int iResponseBufferLen) {
 
     assert(g_psMethodTable[iMethod].func);
 
     //if no response buffer or no id - no need bother with all this return value stuff
-    if (!pcResponse || iRespMaxLen < 1 || !g_psTokId || g_psTokId->size != 1) {
+    if (!pcResponseBuffer || iResponseBufferLen < 1 || !g_psTokId || g_psTokId->size != 1) {
         return g_psMethodTable[iMethod].func(pcCommand, g_psTokens, g_psTokParams, NULL, 0);
     }
 
     //prep string (will be null terminated)
-    int iTotalLen = snprintf(pcResponse, iRespMaxLen,
+    int iTotalLen = snprintf(pcResponseBuffer, iResponseBufferLen,
             "{\"jsonrpc\":\"2.0\", \"id\":%s%.*s%s, \"result\":",
             g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? "\"" : "",
             g_psTokens[g_psTokId->first_child].end - g_psTokens[g_psTokId->first_child].start,
@@ -463,15 +465,15 @@ rpc_call_method(const char* const pcCommand, int iMethod, char* pcResponse, int 
             g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? "\"" : "");
 
     //check that there is at least one more empty spot for '}' (zero already there)
-    if (iTotalLen+2/*plus },0*/ > iRespMaxLen) {
-        pcResponse[0] = 0;
+    if (iTotalLen+2/*plus },0*/ > iResponseBufferLen) {
+        pcResponseBuffer[0] = 0;
         return WORKSTATUS_RPC_ERROR_OUTOFRESBUF;
     }
 
     //call method
     //UARTRPC_PRINTF("method will start writing at: %d, max chars: %d\n", iTotalLen, iRespMaxLen-iTotalLen-2);
     workstatus_t eRet = g_psMethodTable[iMethod].func(pcCommand, g_psTokParams, g_psTokens,
-                    pcResponse+iTotalLen, iRespMaxLen-iTotalLen-2); //-2 for },0
+                    pcResponseBuffer+iTotalLen, iResponseBufferLen-iTotalLen-2); //-2 for },0
 
     //if method returned error, dont' bother with json string, it will get overwritten
     if (eRet != WORKSTATUS_NO_ERROR) {
@@ -480,11 +482,11 @@ rpc_call_method(const char* const pcCommand, int iMethod, char* pcResponse, int 
 
     //close the curly bracket (string will be null terminated again)
     //don't know how many chars function wrote, so need to measure
-    iTotalLen = strlen(pcResponse);
-    if (iTotalLen+3 <= iRespMaxLen) { //3 for },\n,\0              //2 for },\0
-        pcResponse[iTotalLen] = '}';
-        pcResponse[iTotalLen+1] = '\n';
-        pcResponse[iTotalLen+2] = '\0';
+    iTotalLen = strlen(pcResponseBuffer);
+    if (iTotalLen+3 <= iResponseBufferLen) { //3 for },\n,\0              //2 for },\0
+        pcResponseBuffer[iTotalLen] = '}';
+        pcResponseBuffer[iTotalLen+1] = '\n';
+        pcResponseBuffer[iTotalLen+2] = '\0';
     }
 
     return eRet;
