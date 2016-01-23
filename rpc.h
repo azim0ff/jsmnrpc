@@ -6,14 +6,13 @@
 #ifndef RPC_H
 #define	RPC_H
 
-#include <stdint.h>
-
 #include "jsmn/jsmn.h"
 
 #ifdef	__cplusplus
 "C" {
 #endif
 
+#define WORKSTATUS_MAX_DIGITS 6
 typedef enum {
     // -- These are in the range of local error codes [-32000..-32900]
     /* No error */
@@ -79,6 +78,10 @@ typedef struct {
 workstatus_t    rpc_install_methods(const methodtable_entry_t* psMethods, unsigned int uiNumMethods);
 workstatus_t    rpc_handle_command(const char* const pcCommand, int iCommandLen, char* pcResponse, int iRespMaxLen);
 const char*     workstatus_to_string (workstatus_t eCode);
+//rpc_server_install_methods
+//rpc_server_handle_command
+//rpc_client_handle_response .... or not
+//TODO: rename this whole module to rpc_server
 
 #ifdef	__cplusplus
 }

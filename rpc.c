@@ -6,17 +6,15 @@
 // ------------------------ INCLUDES ---------------------------------------- //
 #include <string.h> //for strncmp, strlen
 #include <stdio.h>  //for printf, snprintf
+#include <stdbool.h>
 
-#include "my_assert.h"
 #include "jsmn/jsmn.h"
 #include "jsmnrpc/rpc.h"
-#include "modules/uart_console.h"
 
 
-// -------------------------- PRINTING ------------------------------------- //
-// Define your `printf` implementation (printf, uart_printf, ...)
-extern uart_context_t* g_psDBGUARTCtx;
-#define DEBUG_PRINTF(...)	UARTprintf(g_psDBGUARTCtx, __VA_ARGS__)
+// -------------------------- PLATFORM DEPENDENT ------------------------------- //
+#define RPC_DEBUG_PRINTF(...) printf(__VA_ARGS__)
+#define RPC_ASSERT(b) 
 
 
 // ------------------------ GLOBALS ----------------------------------------- //
@@ -51,6 +49,7 @@ static const char JRPC_NULL[]         = "null";
 #define JSON_IS_NULL(String, Token) \
     ((Token)->type == JSMN_PRIMITIVE && JSON_MATCHED(String, Token, JRPC_NULL))
 
+
 // ------------------------ FUNCTIONS --------------------------------------- //
 
 // -------------------------------------------------------------------------- //
@@ -65,44 +64,42 @@ static const char JRPC_NULL[]         = "null";
 //       in the future. Feel free to remove it if not needed.
 //
 // -------------------------------------------------------------------------- //
+#if 0
 static void
 depth_first_dump(const char* const pcJson, jsmntok_t* psToks, unsigned int uiSelf,
                                                                 unsigned int uiLevel)
 {
     //safety check
     if (!psToks || !pcJson) {
-        assert(0);
+        RPC_ASSERT(0);
         return;
     }
 
-    //print self info
-    //DEBUG_PRINTF("%*c", uiLevel, ' ');
-    //DEBUG_PRINTF("%.*s", psToks[uiSelf].end - psToks[uiSelf].start, &pcJson[psToks[uiSelf].start]);
-
-    for (uint16_t i = 0; i < uiLevel; i++) {
-        UARTwrite(g_psDBGUARTCtx, " ",1,false);
+    // tabbed output
+    for (unsigned int i = 0; i < uiLevel; i++) {
+        printf(" ");
     }
-    for (uint16_t i = psToks[uiSelf].start; i < psToks[uiSelf].end; i++) {
-        UARTwrite(g_psDBGUARTCtx, &(pcJson[i]), 1,false);
+    for (unsigned int i = psToks[uiSelf].start; i < psToks[uiSelf].end; i++) {
+        printf("%c", pcJson[i]);
     }
 
     switch(psToks[uiSelf].type) {
         case JSMN_OBJECT:
-            DEBUG_PRINTF("  (object, ");
+            RPC_DEBUG_PRINTF("  (object, ");
             break;
         case JSMN_ARRAY:
-            DEBUG_PRINTF("  (array, ");
+            RPC_DEBUG_PRINTF("  (array, ");
             break;
         case JSMN_STRING:
-            DEBUG_PRINTF("  (string, ");
+            RPC_DEBUG_PRINTF("  (string, ");
             break;
         case JSMN_PRIMITIVE:
-            DEBUG_PRINTF("  (primitive, ");
+            RPC_DEBUG_PRINTF("  (primitive, ");
             break;
         default:
-            assert(0);
+            RPC_ASSERT(0);
     }
-    DEBUG_PRINTF("size: %d, start: %d, end: %d, first child: %d, next sibling: %d)\n",
+    RPC_DEBUG_PRINTF("numchildren: %d, start: %d, end: %d, first child: %d, next sibling: %d)\n",
             psToks[uiSelf].size, psToks[uiSelf].start, psToks[uiSelf].end,
             psToks[uiSelf].first_child, psToks[uiSelf].next_sibling);
 
@@ -114,6 +111,7 @@ depth_first_dump(const char* const pcJson, jsmntok_t* psToks, unsigned int uiSel
         }
     }
 }
+#endif
 
 
 // -------------------------------------------------------------------------- //
@@ -197,14 +195,15 @@ rpc_parse_command(const char* const pcCommand, int iCommandLen) {
             case JSMN_ERROR_PART:
                 return WORKSTATUS_PARSE_ERROR_PART;
             default:
-                assert(0);
+                RPC_ASSERT(0);
+                printf("jsmn_parse error");
         }
     }
 
     // ** DEBUG **
-//    if (iRes > 0) {
-//        depth_first_dump(pcCommand, g_psTokens, 0, 0);
-//    }
+    // if (iRes > 0) {
+    //     depth_first_dump(pcCommand, g_psTokens, 0, 0);
+    // }
 
     // total number of tokens found
     g_iNumTokens = iRes;
@@ -220,7 +219,7 @@ rpc_parse_command(const char* const pcCommand, int iCommandLen) {
 // OUTPUT:  status code
 //
 // -------------------------------------------------------------------------- //
-static workstatus_t
+static workstatus_t 
 rpc_validate_rpc(const char* const pcCommand) {
     //if we're here, we know that object parsed correctly and we can start
     //looking at the tokens
@@ -295,19 +294,11 @@ rpc_validate_rpc(const char* const pcCommand) {
         return WORKSTATUS_RPC_ERROR_INVALIDMETHOD;
     }
 
-    //check params. If present...
-//    if (g_psTokParams == NULL) {
-//        return WORKSTATUS_RPC_ERROR_INVALIDPARAMS;
-//    }
     //params are optional, but if they're there, we check for validity
     if (bBadParams) {
         return WORKSTATUS_RPC_ERROR_INVALIDPARAMS;
     }
 
-        //check id. If present...
-//    if (g_psTokId == NULL) {
-//        return WORKSTATUS_RPC_ERROR_INVALIDID;
-//    }
     //id is optional, but if it's there, we check for validity
     if (bBadId) {
         return WORKSTATUS_RPC_ERROR_INVALIDID;
@@ -429,7 +420,7 @@ rpc_validate_params(const char* const pcCommand, int iMethod) {
                 }
                 break;
             default:
-                assert(0);
+                RPC_ASSERT(0);
         }
     } while ( (iSibling = g_psTokens[iSibling].next_sibling) != -1 );
 
@@ -446,29 +437,57 @@ rpc_validate_params(const char* const pcCommand, int iMethod) {
 // OUTPUT:  status code
 //
 // -------------------------------------------------------------------------- //
-static workstatus_t
+static 
+workstatus_t
+//IRAM_ATTR
 rpc_call_method(const char* const pcCommand, int iMethod, char* pcResponseBuffer, int iResponseBufferLen) {
 
-    assert(g_psMethodTable[iMethod].func);
+    RPC_ASSERT(g_psMethodTable[iMethod].func);
 
     //if no response buffer or no id - no need bother with all this return value stuff
     if (!pcResponseBuffer || iResponseBufferLen < 1 || !g_psTokId || g_psTokId->size != 1) {
         return g_psMethodTable[iMethod].func(pcCommand, g_psTokens, g_psTokParams, NULL, 0);
     }
 
+//** crashes on %.*s, need to rewrite
     //prep string (will be null terminated)
-    int iTotalLen = snprintf(pcResponseBuffer, iResponseBufferLen,
-            "{\"jsonrpc\":\"2.0\", \"id\":%s%.*s%s, \"result\":",
-            g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? "\"" : "",
-            g_psTokens[g_psTokId->first_child].end - g_psTokens[g_psTokId->first_child].start,
-            &pcCommand[g_psTokens[g_psTokId->first_child].start],
-            g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? "\"" : "");
+    // int iTotalLen = snprintf(pcResponseBuffer, iResponseBufferLen,
+    //         "{\"jsonrpc\":\"2.0\", \"id\":%s%.*s%s, \"result\":",
+    //         g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? "\"" : "",
+    //         g_psTokens[g_psTokId->first_child].end - g_psTokens[g_psTokId->first_child].start,
+    //         &pcCommand[g_psTokens[g_psTokId->first_child].start],
+    //         g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? "\"" : "");
+
+    //calculate required space
+    static const char one[] = "{\"jsonrpc\":\"2.0\", \"id\":";
+    static const char two[] = ", \"result\":";
+    int iTotalLen = strlen(one) + strlen(two)
+            + g_psTokens[g_psTokId->first_child].end - g_psTokens[g_psTokId->first_child].start
+            + (g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? 2 : 0);
+
 
     //check that there is at least one more empty spot for '}' (zero already there)
     if (iTotalLen+2/*plus },0*/ > iResponseBufferLen) {
         pcResponseBuffer[0] = 0;
         return WORKSTATUS_RPC_ERROR_OUTOFRESBUF;
     }
+
+    //now it safe to write the full string into buffer
+    int printed = snprintf(pcResponseBuffer, iResponseBufferLen, "%s%s", one, 
+                            g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? "\"" : "" );
+    for (unsigned int i = 0; i < g_psTokens[g_psTokId->first_child].end - g_psTokens[g_psTokId->first_child].start; i++ )
+    {
+        pcResponseBuffer[printed++] = pcCommand[g_psTokens[g_psTokId->first_child].start + i];
+    }
+    printed += snprintf(pcResponseBuffer + printed, iResponseBufferLen - printed, "%s%s", 
+                        g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? "\"" : "",
+                        two);
+
+// printf("before function\n");
+// for (unsigned int j = 0; j < 100; j++) {
+//     printf("%c", pcResponseBuffer[j]);
+// }
+// printf("\n");
 
     //call method
     //UARTRPC_PRINTF("method will start writing at: %d, max chars: %d\n", iTotalLen, iRespMaxLen-iTotalLen-2);
@@ -479,6 +498,12 @@ rpc_call_method(const char* const pcCommand, int iMethod, char* pcResponseBuffer
     if (eRet != WORKSTATUS_NO_ERROR) {
         return eRet;
     }
+
+// printf("after function\n");
+// for (unsigned int j = 0; j < 100; j++) {
+//     printf("%c", pcResponseBuffer[j]);
+// }
+// printf("\n");
 
     //close the curly bracket (string will be null terminated again)
     //don't know how many chars function wrote, so need to measure
@@ -507,15 +532,51 @@ static int
 rpc_print_error_json(const char* pcCommand, char* pcResponse, 
                                       int iRespMaxLen, workstatus_t eStatus)
 {
-    int iTotalLen = snprintf(pcResponse, iRespMaxLen,
-            "{\"jsonrpc\":\"2.0\", \"error\":{\"code\":%d, \"message\":\"%s\"}, \"id\":%s%.*s%s}\n",
-            eStatus,
-            workstatus_to_string(eStatus),
-            g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? "\"" : "",
-            g_psTokens[g_psTokId->first_child].end - g_psTokens[g_psTokId->first_child].start,
-            &pcCommand[g_psTokens[g_psTokId->first_child].start],
-            g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? "\"" : "");
-    return iTotalLen;
+    //can't use %.*s, rewrite...
+    // int iTotalLen = snprintf(pcResponse, iRespMaxLen,
+    //         "{\"jsonrpc\":\"2.0\", \"error\":{\"code\":%d, \"message\":\"%s\"}, \"id\":%s%.*s%s}\n",
+    //         eStatus,
+    //         workstatus_to_string(eStatus),
+    //         g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? "\"" : "",
+    //         g_psTokens[g_psTokId->first_child].end - g_psTokens[g_psTokId->first_child].start,
+    //         &pcCommand[g_psTokens[g_psTokId->first_child].start],
+    //         g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? "\"" : "");
+
+
+    //first calculate length
+    static const char one[] = "{\"jsonrpc\":\"2.0\", \"error\":{\"code\":";
+    static const char two[] = ", \"message\":\"";
+    static const char three[] = "\"}, \"id\":";
+    static const char four[] = "}\n";
+    int iTotalLen = strlen(one) + strlen(two) + strlen(three) + strlen(four)
+            + WORKSTATUS_MAX_DIGITS
+            + strlen(workstatus_to_string(eStatus))
+            + g_psTokens[g_psTokId->first_child].end - g_psTokens[g_psTokId->first_child].start
+            + (g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? 2 : 0);
+
+    if (iTotalLen > iRespMaxLen) {
+        return 0;
+    }
+
+    //now it is safe to print
+    int printed = snprintf(pcResponse, iRespMaxLen,
+        "%s%d%s%s%s%s",
+        one,
+        eStatus,
+        two,
+        workstatus_to_string(eStatus),
+        three,
+        g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? "\"" : "");
+
+    for (unsigned int i = 0; i < g_psTokens[g_psTokId->first_child].end - g_psTokens[g_psTokId->first_child].start; i++)
+    {
+        pcResponse[printed++] = pcCommand[g_psTokens[g_psTokId->first_child].start + i];
+    }
+
+    printed += snprintf(pcResponse + printed, iRespMaxLen - printed, "%s}\n", 
+                        g_psTokens[g_psTokId->first_child].type == JSMN_STRING ? "\"" : "");
+
+    return printed;
 }
 
 // -------------------------------------------------------------------------- //
@@ -547,6 +608,7 @@ rpc_print_error_json(const char* pcCommand, char* pcResponse,
 //
 // -------------------------------------------------------------------------- //
 workstatus_t
+//IRAM_ATTR
 rpc_handle_command(const char* const pcCommand, int iCommandLen,
                                       char* pcResponse, int iRespMaxLen) {
     workstatus_t eStatus = WORKSTATUS_NO_ERROR;
@@ -633,7 +695,7 @@ L_done:
                                            iRespMaxLen, JSONRPC_20_INTERNALERROR);
                 break;
             default:
-                assert(0);
+                RPC_ASSERT(0);
         }
 
         //check snprintf retval, return no response (would be misformated anyway)
@@ -670,6 +732,9 @@ L_done:
 // OUTPUT:  returns a const string containing an explanation of the status code
 //
 // -------------------------------------------------------------------------- //
+
+//TODO: I'm thinking of getting rid of this function and its detailed error messages...
+
 const char*
 workstatus_to_string(workstatus_t eStatus) {
     switch(eStatus) {
@@ -713,7 +778,7 @@ workstatus_to_string(workstatus_t eStatus) {
             return "internal error";
 
         default:
-            assert(0);
+            RPC_ASSERT(0);
     }
     return NULL;
 }
