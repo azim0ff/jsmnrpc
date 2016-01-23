@@ -1,6 +1,6 @@
 # JSMN RPC #
 
-This repository contains a JSON RPC implementation that is built on top of the JSMN parser. The RPC uses printf and some related string functions.
+This repository contains a JSON RPC implementation that is built on top of the JSMN JSON parser.
 
 The API includes only 3 methods:    
 `rpc_install_methods()` --- connects C methods to their RPC names.     
