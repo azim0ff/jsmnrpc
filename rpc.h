@@ -1,7 +1,11 @@
-// -------------------------------------- //
-// Copyright 2014,2015 kacangbawang.com   //
-// See LICENSE                            //
-// -------------------------------------- //
+/***************************************************************************
+ * Copyright 2014,2015 azimoff/kacangbawang.com
+ *
+ * Description: JSONRPC implementation built on top 
+ *              of the JSMN JSON parser
+ *
+ * License: MIT License
+ ***************************************************************************/
 
 #ifndef RPC_H
 #define	RPC_H
